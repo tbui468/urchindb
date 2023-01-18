@@ -1,0 +1,25 @@
+Implement key/value database
+
+    Index Record:
+        uint32_t next_off
+        uint32_t data_off
+        uint32_t data_size
+        uint32_t key_size
+        char* key
+
+    Data Record
+        char* data
+
+    Make github repo for this 
+
+    Multiprocesser db - make it work with unix flock first
+        How to test? Run two programs that continuously overwrite the same record with different data
+        eg, one program writes ones and the other writes zeros.   Loop it a hundred times and see
+        if data is valid (it should all be ones or zeros).  A
+
+    Make locking compatible with Windows - will need to create new abstraction
+    B+ tree instead of hash table
+    Make it a distributed database - need to add network support
+        how to keep all databases consistent?  !!!consensus!!!
+        Should all instances have the same internal format, or just the same keys/values?
+        Would also need to timestamp stuff
