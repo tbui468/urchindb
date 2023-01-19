@@ -10,16 +10,24 @@ Implement key/value database
     Data Record
         char* data
 
-    Make github repo for this 
+    db_fetch retrieves corrupted data now - db_store doesn't lock file, so when writing a large file (over 5000 chars)
+        it causes fetch to get bad data
+        Add flock to see if it fixes this
+        May also need to switch from fread, fseek, etc to the sys call versions
 
     Multiprocesser db - make it work with unix flock first
         How to test? Run two programs that continuously overwrite the same record with different data
         eg, one program writes ones and the other writes zeros.   Loop it a hundred times and see
         if data is valid (it should all be ones or zeros).  A
 
-    Make locking compatible with Windows - will need to create new abstraction
-    B+ tree instead of hash table
+    B tree instead of hash table
+        Could try binary tree too (since B tree is a generalization over binary trees)
+        Could just go straight to B+ trees
+        Be sure to run some tests
+
     Make it a distributed database - need to add network support
         how to keep all databases consistent?  !!!consensus!!!
         Should all instances have the same internal format, or just the same keys/values?
         Would also need to timestamp stuff
+
+    Make locking compatible with Windows - will need to create new abstraction

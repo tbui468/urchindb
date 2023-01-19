@@ -96,6 +96,8 @@ static FILE* _db_open(const char* filename, bool fill) {
         f = _fopen(filename, "r+");
     }
 
+    setbuf(f, NULL);
+
     return f;
 }
 
