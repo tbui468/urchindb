@@ -6,9 +6,7 @@
 
 int main (int argc, char** argv) {
     struct DB* db = db_open("test");
-
-    /*
-
+    //general testing
     if (db_store(db, "dog", "dog data") != 0)
         err_quit("db_store failed");
     if (db_store(db, "cat", "cat data") != 0)
@@ -23,6 +21,8 @@ int main (int argc, char** argv) {
         err_quit("db_store failed");
     if (db_store(db, "hog", "hog data") != 0)
         err_quit("db_store failed");
+    if (db_store(db, "hog", "hog data 2") != 0)
+        err_quit("db_store failed");
 
     db_rewind(db);
     char* key;
@@ -31,7 +31,9 @@ int main (int argc, char** argv) {
         printf("%s: %s\n", key, value);
         free(key);
         free(value);
-    }*/
+    }
+/*
+    //for testing locking of files
     const int len = 5000;
     char msg1[len];
     char msg2[len];
@@ -59,10 +61,12 @@ int main (int argc, char** argv) {
             if (data) {
                 if (!(strcmp(data, msg1) == 0 || strcmp(data, msg2) == 0))
                     printf("corrupted data\n");
+                else
+                    printf("valid data\n");
                 free(data);
             }
         }
-    }
+    }*/
 
     db_close(db);
     return 0;

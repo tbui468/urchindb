@@ -1,3 +1,6 @@
+Look here for hints on creating a database:
+    https://cs.brown.edu/courses/csci1270/website_2021/
+
 Implement key/value database
 
     Index Record:
@@ -10,24 +13,28 @@ Implement key/value database
     Data Record
         char* data
 
-    db_fetch retrieves corrupted data now - db_store doesn't lock file, so when writing a large file (over 5000 chars)
-        it causes fetch to get bad data
-        Add flock to see if it fixes this
-        May also need to switch from fread, fseek, etc to the sys call versions
+    Apply course-grain locking
+        just wrap code in public functions in either read/write and unlock
 
-    Multiprocesser db - make it work with unix flock first
-        How to test? Run two programs that continuously overwrite the same record with different data
-        eg, one program writes ones and the other writes zeros.   Loop it a hundred times and see
-        if data is valid (it should all be ones or zeros).  A
+    Apply fine-grain locking
+        Where should the lock be applied?  (eg, what byte region)
+            Lock the entire chain - but other chains (including the freelist) can still be used by other processes
 
     B tree instead of hash table
-        Could try binary tree too (since B tree is a generalization over binary trees)
-        Could just go straight to B+ trees
-        Be sure to run some tests
+        Why use a b tree?  If data is index using a b-tree, we can search for ALL records that match a condition
+            eg, if age > 0 and age < 10.
+            Right now, we can't do that
+        But would require user defining a table
+            database would assign primary keys and index by primary keys by default
+            when making table, user could specify which field to index
+
+    Does paging make database faster?
+        Write some tests that write/read to database.
+        Add pager that reads fixed data from the index and data files into memory
+        Unless data is written, just read data from buffers in memory instead of accessing disk
+        Only when something is written (eg, using db_store), do we write buffers back to disk
 
     Make it a distributed database - need to add network support
         how to keep all databases consistent?  !!!consensus!!!
         Should all instances have the same internal format, or just the same keys/values?
         Would also need to timestamp stuff
-
-    Make locking compatible with Windows - will need to create new abstraction
