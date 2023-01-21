@@ -1,6 +1,27 @@
 Look here for hints on creating a database:
     https://cs.brown.edu/courses/csci1270/website_2021/
 
+Paging
+    Test results without paging with 1024 buckets (bucket count didn't seem to make a difference)
+        n = 500:  10.15s
+        n = 1000: 39.54s
+        n = 2000: 156.34
+
+    Need to write data into buffers instead of disk for now
+        replace ALL _fread, _fwrite, _fseek, and _ftell with:
+            _db_read, _db_write, _db_seek, _db_tell
+    
+    Then, when db_close is called, write buffers into disk once
+ 
+    Abstract away reading and writing
+    The implementation should use the cache (buffer) when reading
+        and then write the buffer to disk when writing
+    But then we need to be careful that the buffer doesn't hold stagnant data
+
+    What functions do we need for the pager?
+        For now, just keep everything in RAM, and then write to disk when necessary
+        _db_fetch_page(struct DB* db, uint32_t off,
+
 Implement key/value database
 
     Index Record:
@@ -13,20 +34,62 @@ Implement key/value database
     Data Record
         char* data
 
-    Apply course-grain locking
-        just wrap code in public functions in either read/write and unlock
+    enum DbType {
+        DB_INT,
+        DB_STRING
+    };
+
+    struct Field {
+        char* name;
+        enum DbType type;
+    };
+
+    struct Field fields[3];
+    fields[0].name = "first_name";
+    fields[0].type = DB_STRING;
+    fields[0].name = "last_name";
+    fields[0].type = DB_STRING;
+    fields[0].name = "age";
+    fields[0].type = DB_INT;
+    db_create("Students", fields, 3);
+
+    Questions:
+        How are data files and index files stored now?
+            data should be stored with fields sequentially: primary key, and then fields in order
+                DB_STRING start with an uint32_t specifying length of string, followed by string
+                DB_INT is just a 4 byte integer for now
+            index file initially create with primary key as index, stored in tree (just use binary tree for simplicity now)
+                each node has the primary key, and also the offset into the data file
+                indexing by a different field will create a new index file
+                    students.idx.primary_key - this needs to be disallowed as a field name
+                    students.idx.age
+                    students.dat
+
+    When opening a database, must define a schema for data
+        db_open() <-----only works with database that already exists
+        db_create() <-----need to be called before db_open can be used, fails if database with given name already exists
+        db_create("students", char** fields, enum db_types* types);  <---returns 0 if database was succesfully create
+            user still needs to call db_open to open the newly created database
+            how about indexing tables?  Default is primary key (uint32_t)
+            db_index(db, char* field) <---create new index using this field in table
+
+        B tree instead of hash table Why use a b tree?  If data is index using a b-tree, we can search for ALL records that match a condition
+                eg, if age > 0 and age < 10.
+                Right now, we can't do that
+            But would require user defining a table
+                database would assign primary keys and index by primary keys by default
+                when making table, user could specify which field to index
+
+    db_insert
+    db_update
+    db_delete
+    db_select(db, "age", age_fun); //select all records where age field is passed to age_fun, and result is true
+
+    SQL and engine to search database
 
     Apply fine-grain locking
         Where should the lock be applied?  (eg, what byte region)
             Lock the entire chain - but other chains (including the freelist) can still be used by other processes
-
-    B tree instead of hash table
-        Why use a b tree?  If data is index using a b-tree, we can search for ALL records that match a condition
-            eg, if age > 0 and age < 10.
-            Right now, we can't do that
-        But would require user defining a table
-            database would assign primary keys and index by primary keys by default
-            when making table, user could specify which field to index
 
     Does paging make database faster?
         Write some tests that write/read to database.

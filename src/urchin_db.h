@@ -2,7 +2,7 @@
 #define URCHIN_DB_H
 
 #include <stdint.h>
-#define BUCKETS_MAX 4
+#define BUCKETS_MAX 1024
 
 struct DB {
     FILE* datf;

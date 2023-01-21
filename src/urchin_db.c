@@ -8,12 +8,15 @@
 
 #define BUCKETS_MAX 4
 #define FREELIST_OFF 0
+#define PAGE_SIZE 4096
 
 struct DB {
     FILE* datf;
     FILE* idxf;
     uint32_t chain_off;
     uint32_t idxrec_off;
+    char* dat_buf;
+    char* idx_buf;
 };
 
 struct IdxRec {
@@ -366,12 +369,17 @@ struct DB* db_open(const char* dbname) {
     db->chain_off = 1;
     db->idxrec_off = 0;
 
+    db->idx_buf = _malloc(PAGE_SIZE * PAGE_SIZE);
+    db->dat_buf = _malloc(PAGE_SIZE * PAGE_SIZE);
+
     return db;
 }
 
 void db_close(struct DB* db) {
     fclose(db->idxf);
     fclose(db->datf);
+    free(db->idx_buf);
+    free(db->dat_buf);
 }
 
 
