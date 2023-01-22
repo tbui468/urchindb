@@ -10,6 +10,7 @@ int standard_test() {
     //general testing
     if (db_store(db, "dog", "dog data") != 0)
         err_quit("db_store failed");
+    
     if (db_store(db, "cat", "cat data") != 0)
         err_quit("db_store failed");
     if (db_store(db, "bird", "bird data") != 0)
@@ -24,16 +25,16 @@ int standard_test() {
         err_quit("db_store failed");
     if (db_store(db, "hog", "hog data 2") != 0)
         err_quit("db_store failed");
+    if (db_store(db, "ant", "ant data") != 0)
+        err_quit("db_store failed");
 
-    for (int i = 0; i < 10000; i++) {
-        db_rewind(db);
-        char* key;
-        while ((key = db_nextrec(db))) {
-            char* value = db_fetch(db, key);
-        //    printf("%s: %s\n", key, value);
-            free(key);
-            free(value);
-        }
+    db_rewind(db);
+    char* key;
+    while ((key = db_nextrec(db))) {
+        char* value = db_fetch(db, key);
+        printf("%s: %s\n", key, value);
+        free(key);
+        free(value);
     }
 
     db_close(db);
@@ -171,7 +172,8 @@ int paging_test(uint32_t n) {
 }
 
 int main(int argc, char** argv) {
-    paging_test(500);
+    //standard_test();
+    paging_test(2000);
     printf("Seconds passed: %f\n", clock() / (double)CLOCKS_PER_SEC);
     return 0;
 }

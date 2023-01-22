@@ -1,26 +1,66 @@
 Look here for hints on creating a database:
     https://cs.brown.edu/courses/csci1270/website_2021/
 
-Paging
-    Test results without paging with 1024 buckets (bucket count didn't seem to make a difference)
+Paging - NOTE: reset BUCKETS_MAX back to 1024 before running tests for cache buffers
+    Test results without paging with 1024 buckets (bucket count didn't seem to make a noticeable difference)
+        seems like file access was the bottleneck, and not traversing the hash chains.
         n = 500:  10.15s
         n = 1000: 39.54s
         n = 2000: 156.34
 
+    Cache buffer - single process without any multiprocessor protection
+        n = 500:  0.29s
+        n = 1000: 0.91s
+        n = 2000: 2.66s
+
+    Cache buffer - multiprocess protection / locking / copy-on-write / checking timestamps for stagnant data
+        Should be slower than above, but hopefully a fair bit faster than direct file access
+
+    _db_new_idxrec is returning the same offset when storing two different records
+
+    Could just write to buffer for now to see what happens - just forget about file locking and multiprocesses for now
+        If it's fairly faster, then we know for certain that file access is the bottleneck.  Multiprocess stuff can
+        be figured out later.
+
+    What about processes that have stale data when reading?  How would other processes know
+        if new data was written to database???  This wouldn't be possible unless the process
+        STILL read the file for a timestamp to check if it was updated...that would defeat
+        the goal of NOT reading the file everytime a query was sent by a process.
+    
+        Could have the first n bytes of a file be a timestamp
+            Everytime a query is sent, process must check timestamp of last write
+            to make sure that data is stagnant.  If so, must reload (all for now)
+            data into buffer before reading.  A read lock can be used on the file then.
+
+            On writing data, also must perform a write lock.  This solves the problem, assuming
+            that the number of bytes read from a file is proportional to the time it takes
+            eg, reading 10 bytes takes twice as long as 5 bytes.  But would copying all of
+            the file into the buffers be very inefficient???  
+
+            Could reserve first dozen bytes for timestamps for each block - then only
+            copy blocks where the timestamp is invalid.  But would need to do the same for
+            both files.  And what if the files expand to a larger size?  Would need to rewrite
+            so that enough room is reserved at the beginning of the file.
+
+    Is there an easier way to cache data from the file?
+
     Need to write data into buffers instead of disk for now
+        When opening a new database:
+            if it already exists, open and fill both buffers
+            else, open, and then fill index buffer with default buckets and free list
+                will leave writing to files when database is closed
+
         replace ALL _fread, _fwrite, _fseek, and _ftell with:
-            _db_read, _db_write, _db_seek, _db_tell
+            _db_read, _db_write, _db_seek, _db_tell (_db_tell could just return buffer size for now)
     
     Then, when db_close is called, write buffers into disk once
- 
-    Abstract away reading and writing
-    The implementation should use the cache (buffer) when reading
-        and then write the buffer to disk when writing
-    But then we need to be careful that the buffer doesn't hold stagnant data
 
-    What functions do we need for the pager?
-        For now, just keep everything in RAM, and then write to disk when necessary
-        _db_fetch_page(struct DB* db, uint32_t off,
+    Rerun tests to see if any improvement (should be quite significant)
+
+    Will need copy-on-write capabilities (including locking of files)
+        How can this be tested?  Using same testing code as before to test locking files?
+
+    Should be able to read/copy-on-write only segments of the file instead of entire thing
 
 Implement key/value database
 
