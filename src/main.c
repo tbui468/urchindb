@@ -10,7 +10,6 @@ int standard_test() {
     //general testing
     if (db_store(db, "dog", "dog data") != 0)
         err_quit("db_store failed");
-    
     if (db_store(db, "cat", "cat data") != 0)
         err_quit("db_store failed");
     if (db_store(db, "bird", "bird data") != 0)
@@ -174,6 +173,7 @@ int paging_test(uint32_t n) {
 int main(int argc, char** argv) {
     //standard_test();
     paging_test(2000);
+    //file_locking_test(argc, argv);
     printf("Seconds passed: %f\n", clock() / (double)CLOCKS_PER_SEC);
     return 0;
 }

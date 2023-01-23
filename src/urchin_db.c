@@ -7,7 +7,9 @@
 #include <fcntl.h>
 
 #define BUCKETS_MAX 4
-#define FREELIST_OFF 0
+#define UPDATECOUNT_OFF 0
+#define FREELIST_OFF 8
+#define HASHTAB_OFF 12
 #define PAGE_SIZE 4096
 
 struct DB {
@@ -144,9 +146,9 @@ static FILE* _db_open(const char* filename, bool fill) {
         f = _fopen(filename, "w");
         if (fill) {
             void* ptr;
-            ptr = _calloc(BUCKETS_MAX + 1, sizeof(uint32_t));
+            ptr = _calloc(BUCKETS_MAX + 3, sizeof(uint32_t)); //+2 for update count and +1 for freelist
             _write_lock(f, SEEK_SET, 0, 0);
-            _fwrite(ptr, sizeof(uint32_t), BUCKETS_MAX + 1, f);
+            _fwrite(ptr, sizeof(uint32_t), BUCKETS_MAX + 3, f); //+2 for update count and +1 for freelist
             _unlock(f, SEEK_SET, 0, 0);
             free(ptr);
         }
@@ -213,7 +215,7 @@ static void _db_read_data(struct DB* db, uint32_t idxrec_off, char* data) {
 //returns 0 if record not found
 //used by db_store (to check for duplicates) and db_fetch
 static uint32_t _db_find_idxrec_off(struct DB* db, const char* key) {
-    uint32_t bucket_offset = (_hash_key(key) % BUCKETS_MAX + 1) * sizeof(uint32_t);
+    uint32_t bucket_offset = _hash_key(key) % BUCKETS_MAX * sizeof(uint32_t) + HASHTAB_OFF;
     uint32_t next_off = *((uint32_t*)(db->idx_buf + bucket_offset));
 
     uint32_t prev_off = 0;
@@ -315,7 +317,7 @@ static uint32_t _db_new_idxrec(struct DB* db, const char* key, const char* value
     db->idx_len += sizeof(uint32_t) * 4 + strlen(key);
     db->dat_len += strlen(value);
 
-    struct IdxRec r = {0, data_off, strlen(value), strlen(key) };
+    struct IdxRec r = {0, data_off, strlen(value), strlen(key) }; //0 is temporary - caller should fill this in before writing to disk/buffer
     _db_write_idxrec(db, idx_off, &r);
     
     return idx_off;
@@ -358,10 +360,11 @@ struct DB* db_open(const char* dbname) {
 }
 
 void db_close(struct DB* db) {
+    /*
     _fseek(db->idxf, 0, SEEK_SET);
     _fwrite(db->idx_buf, sizeof(char), db->idx_len, db->idxf);
     _fseek(db->datf, 0, SEEK_SET);
-    _fwrite(db->dat_buf, sizeof(char), db->dat_len, db->datf);
+    _fwrite(db->dat_buf, sizeof(char), db->dat_len, db->datf);*/
 
     fclose(db->idxf);
     fclose(db->datf);
@@ -369,12 +372,8 @@ void db_close(struct DB* db) {
     free(db->dat_buf);
 }
 
-
-int db_delete(struct DB* db, const char* key) {
-    _write_lock(db->idxf, SEEK_SET, 0, 0);
-    _write_lock(db->datf, SEEK_SET, 0, 0);
-
-    uint32_t bucket_offset = (_hash_key(key) % BUCKETS_MAX + 1) * sizeof(uint32_t);
+int _db_dodelete(struct DB* db, const char* key) {
+    uint32_t bucket_offset = _hash_key(key) % BUCKETS_MAX * sizeof(uint32_t) + HASHTAB_OFF;
     uint32_t cur_off = *((uint32_t*)(db->idx_buf + bucket_offset));
     int result = -1;
 
@@ -393,29 +392,57 @@ int db_delete(struct DB* db, const char* key) {
         cur_off = _db_read_next_off(db, cur_off);
     }
 
+    return result;
+}
+
+
+int db_delete(struct DB* db, const char* key) {
+    _write_lock(db->idxf, SEEK_SET, 0, 0);
+    _write_lock(db->datf, SEEK_SET, 0, 0);
+
+    int result = _db_dodelete(db, key);
+
     _unlock(db->idxf, SEEK_SET, 0, 0);
     _unlock(db->datf, SEEK_SET, 0, 0);
     return result;
 }
 
 
+static void _db_doinsert(struct DB* db, const char* key, const char* value) {
+    off_t record_offset = _db_new_idxrec(db, key, value);
+    uint32_t bucket_offset = _hash_key(key) % BUCKETS_MAX * sizeof(uint32_t) + HASHTAB_OFF;
+    _db_insert_idxrec_into_chain(db, record_offset, bucket_offset);
+
+    struct IdxRec r = _db_read_idxrec(db, record_offset);
+    r.data_size = strlen(value);
+    r.key_size = strlen(key);
+    _db_write_idxrec(db, record_offset, &r);
+    _db_write_key(db, record_offset, key);
+    _db_write_data(db, r.data_off, value);
+}
+
 int db_store(struct DB* db, const char* key, const char* value) {
     _write_lock(db->idxf, SEEK_SET, 0, 0);
     _write_lock(db->datf, SEEK_SET, 0, 0);
 
+    //check if data is stale before writing
+    uint64_t file_uc;
+    _fseek(db->idxf, UPDATECOUNT_OFF, SEEK_SET);
+    _fread((void*)&file_uc, sizeof(uint64_t), 1, db->idxf);
+    uint64_t buf_uc = *((uint64_t*)(db->idx_buf + UPDATECOUNT_OFF));
+    if (file_uc > buf_uc) { //stale data in buffers
+        _fseek(db->idxf, 0, SEEK_END);
+        db->idx_len = _ftell(db->idxf);
+        _fread(db->idx_buf, sizeof(char), db->idx_len, db->idxf);
+        _fseek(db->datf, 0, SEEK_END);
+        db->dat_len = _ftell(db->datf); 
+        _fread(db->dat_buf, sizeof(char), db->dat_len, db->datf);
+        buf_uc = file_uc;
+    }
+
     uint32_t idxrec_off;
     if ((idxrec_off = _db_find_idxrec_off(db, key)) == 0) { //key doesn't exist - need to check free space
-        off_t record_offset = _db_new_idxrec(db, key, value);
-        uint32_t bucket_offset = (_hash_key(key) % BUCKETS_MAX + 1) * sizeof(uint32_t);
-        _db_insert_idxrec_into_chain(db, record_offset, bucket_offset);
-
-        struct IdxRec r = _db_read_idxrec(db, record_offset);
-        r.data_size = strlen(value);
-        r.key_size = strlen(key);
-        _db_write_idxrec(db, record_offset, &r);
-        _db_write_key(db, record_offset, key);
-        _db_write_data(db, r.data_off, value);
-
+        _db_doinsert(db, key, value);
     } else { //key already exists - overwrite or delete/recreate if value won't fit
         struct IdxRec r = _db_read_idxrec(db, idxrec_off);
         if (strlen(value) <= r.data_size) {
@@ -423,10 +450,17 @@ int db_store(struct DB* db, const char* key, const char* value) {
             _db_write_idxrec(db, idxrec_off, &r);
             _db_write_data(db, r.data_off, value);
         } else {
-            db_delete(db, key);
-            db_store(db, key, value);
+            _db_dodelete(db, key);
+            _db_doinsert(db, key, value);
         }
     }
+
+    //write buffers back to files
+    *((uint64_t*)(db->idx_buf + UPDATECOUNT_OFF)) = ++buf_uc;
+    _fseek(db->idxf, 0, SEEK_SET);
+    _fwrite((void*)db->idx_buf, sizeof(char), db->idx_len, db->idxf);
+    _fseek(db->datf, 0, SEEK_SET);
+    _fwrite((void*)db->dat_buf, sizeof(char), db->dat_len, db->datf);
 
     _unlock(db->idxf, SEEK_SET, 0, 0);
     _unlock(db->datf, SEEK_SET, 0, 0);
@@ -470,7 +504,7 @@ char* db_nextrec(struct DB* db) {
             db->chain_off++;
             if (db->chain_off > BUCKETS_MAX)
                 return NULL;
-            idxrec_off = *((uint32_t*)(db->idx_buf + db->chain_off * sizeof(uint32_t)));
+            idxrec_off = *((uint32_t*)(db->idx_buf + db->chain_off * sizeof(uint32_t) + HASHTAB_OFF));
             if (idxrec_off)
                 break;
         }
