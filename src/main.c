@@ -228,10 +228,10 @@ int paging_test(uint32_t n) {
 int main(int argc, char** argv) {
     //standard_test();
     //data_persistence_test();
-    //paging_test(2000);
+    paging_test(16000);
     //file_locking_test(argc, argv);
     //stale_fetch_test();
-    stale_delete_test();
+    //stale_delete_test();
     printf("Seconds passed: %f\n", clock() / (double)CLOCKS_PER_SEC);
     return 0;
 }

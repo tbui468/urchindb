@@ -53,12 +53,15 @@ Paging - NOTE: reset BUCKETS_MAX back to 1024 before running tests for cache buf
         n = 1000: 0.91s
         n = 2000: 2.66s
 
-    Cache buffer - multiprocess protection / locking / copy-on-write / checking update count for stale data
+    Cache buffer - multiprocess protection / file locking / copy-on-write / update stale data on read
 
         Single block
-            n = 500:  0.30s
-            n = 1000: 0.89s
-            n = 2000: 2.53s
+            n = 500:   0.31s
+            n = 1000:  1.01s
+            n = 2000:  2.87s
+            n = 4000:  9.40s
+            n = 8000:  36.08s
+            n = 16000: 142.51s
 
         4096 byte blocks
             don't need this yet since single block speed is pretty fast - may change if files become significantly larger
