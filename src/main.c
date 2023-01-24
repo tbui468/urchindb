@@ -5,6 +5,24 @@
 #include <time.h>
 #include "urchin_db.h"
 
+int data_persistence_test() {
+    struct DB* db = db_open("test");
+    if (db_store(db, "dog", "dog data") != 0)
+        err_quit("db_store failed");
+    if (db_store(db, "cat", "cat data") != 0)
+        err_quit("db_store failed");
+    if (db_store(db, "bird", "bird data") != 0)
+        err_quit("db_store failed");
+    db_close(db);
+
+    db = db_open("test");
+    printf("dog: %s\n", db_fetch(db, "dog"));
+    printf("cat: %s\n", db_fetch(db, "cat"));
+    printf("bird: %s\n", db_fetch(db, "bird"));
+    db_close(db);
+    return 0;
+}
+
 int standard_test() {
     struct DB* db = db_open("test");
     //general testing
@@ -69,14 +87,51 @@ int file_locking_test(int argc, char** argv) {
             if (data) {
                 if (!(strcmp(data, msg1) == 0 || strcmp(data, msg2) == 0))
                     printf("corrupted data\n");
-                else
-                    printf("valid data\n");
                 free(data);
             }
         }
     }
 
     db_close(db);
+    return 0;
+}
+
+int stale_fetch_test() {
+    struct DB* db1 = db_open("test");
+    if (db_store(db1, "dog", "dog data") != 0)
+        err_quit("db_store failed");
+
+    struct DB* db2 = db_open("test");
+    printf("dog: %s\n", db_fetch(db2, "dog"));
+
+    if (db_store(db1, "dog", "new dog data") != 0)
+        err_quit("db_store failed");
+
+    printf("dog: %s\n", db_fetch(db2, "dog"));
+
+    db_close(db1);
+    db_close(db2);
+
+    return 0;
+}
+
+int stale_delete_test() {
+    struct DB* db1 = db_open("test");
+    struct DB* db2 = db_open("test");
+
+    if (db_store(db1, "dog", "dog data") != 0)
+        err_quit("db_store failed");
+
+    db_delete(db2, "dog");
+    if (db_fetch(db1, "dog")) {
+        printf("test failed\n");
+    } else {
+        printf("dog record deleted\n");
+    }
+
+    db_close(db1);
+    db_close(db2);
+
     return 0;
 }
 
@@ -172,8 +227,11 @@ int paging_test(uint32_t n) {
 
 int main(int argc, char** argv) {
     //standard_test();
-    paging_test(2000);
+    //data_persistence_test();
+    //paging_test(2000);
     //file_locking_test(argc, argv);
+    //stale_fetch_test();
+    stale_delete_test();
     printf("Seconds passed: %f\n", clock() / (double)CLOCKS_PER_SEC);
     return 0;
 }

@@ -236,10 +236,10 @@ static uint32_t _db_find_idxrec_off(struct DB* db, const char* key) {
 }
 
 static void _db_write_idxrec(struct DB* db, uint32_t off, struct IdxRec* ir) {
-    *(db->idx_buf + off) = ir->next_off;
-    *(db->idx_buf + off + sizeof(uint32_t)) = ir->data_off;
-    *(db->idx_buf + off + sizeof(uint32_t) * 2) = ir->data_size;
-    *(db->idx_buf + off + sizeof(uint32_t) * 3) = ir->key_size;
+    *((uint32_t*)(db->idx_buf + off)) = ir->next_off;
+    *((uint32_t*)(db->idx_buf + off + sizeof(uint32_t))) = ir->data_off;
+    *((uint32_t*)(db->idx_buf + off + sizeof(uint32_t) * 2)) = ir->data_size;
+    *((uint32_t*)(db->idx_buf + off + sizeof(uint32_t) * 3)) = ir->key_size;
 }
 
 static void _db_write_key(struct DB* db, uint32_t off, const char* key) {
@@ -323,6 +323,37 @@ static uint32_t _db_new_idxrec(struct DB* db, const char* key, const char* value
     return idx_off;
 }
 
+static bool _db_buffers_stale(struct DB* db, uint64_t* bigger_uc) {
+    uint64_t file_uc;
+    _fseek(db->idxf, UPDATECOUNT_OFF, SEEK_SET);
+    _fread((void*)&file_uc, sizeof(uint64_t), 1, db->idxf);
+    uint64_t buf_uc = *((uint64_t*)(db->idx_buf + UPDATECOUNT_OFF));
+
+    *bigger_uc = file_uc > buf_uc ? file_uc : buf_uc;
+
+    return file_uc != buf_uc;
+}
+
+static void _db_reload_cache(struct DB* db) {
+    _fseek(db->idxf, 0, SEEK_END);
+    db->idx_len = _ftell(db->idxf);
+    _fseek(db->idxf, 0, SEEK_SET);
+    _fread(db->idx_buf, sizeof(char), db->idx_len, db->idxf);
+
+    _fseek(db->datf, 0, SEEK_END);
+    db->dat_len = _ftell(db->datf); 
+    _fseek(db->datf, 0, SEEK_SET);
+    _fread(db->dat_buf, sizeof(char), db->dat_len, db->datf);
+}
+
+static void _db_write_cache(struct DB* db, uint64_t update_count) {
+    *((uint64_t*)(db->idx_buf + UPDATECOUNT_OFF)) = update_count;
+    _fseek(db->idxf, 0, SEEK_SET);
+    _fwrite((void*)db->idx_buf, sizeof(char), db->idx_len, db->idxf);
+    _fseek(db->datf, 0, SEEK_SET);
+    _fwrite((void*)db->dat_buf, sizeof(char), db->dat_len, db->datf);
+}
+
 struct DB* db_open(const char* dbname) {
     struct DB* db;
     db = _calloc(1, sizeof(struct DB));
@@ -346,26 +377,12 @@ struct DB* db_open(const char* dbname) {
     db->idx_buf = _calloc(PAGE_SIZE * PAGE_SIZE, sizeof(char));
     db->dat_buf = _calloc(PAGE_SIZE * PAGE_SIZE, sizeof(char));
 
-    _fseek(db->idxf, 0, SEEK_END);
-    db->idx_len = _ftell(db->idxf);
-    _fseek(db->idxf, 0, SEEK_SET);
-    _fread((void*)db->idx_buf, sizeof(char), db->idx_len, db->idxf);
-
-    _fseek(db->datf, 0, SEEK_END);
-    db->dat_len = _ftell(db->datf);
-    _fseek(db->datf, 0, SEEK_SET);
-    _fread((void*)db->dat_buf, sizeof(char), db->dat_len, db->datf);
+    _db_reload_cache(db);
 
     return db;
 }
 
 void db_close(struct DB* db) {
-    /*
-    _fseek(db->idxf, 0, SEEK_SET);
-    _fwrite(db->idx_buf, sizeof(char), db->idx_len, db->idxf);
-    _fseek(db->datf, 0, SEEK_SET);
-    _fwrite(db->dat_buf, sizeof(char), db->dat_len, db->datf);*/
-
     fclose(db->idxf);
     fclose(db->datf);
     free(db->idx_buf);
@@ -400,7 +417,14 @@ int db_delete(struct DB* db, const char* key) {
     _write_lock(db->idxf, SEEK_SET, 0, 0);
     _write_lock(db->datf, SEEK_SET, 0, 0);
 
+    uint64_t buf_uc;
+    if (_db_buffers_stale(db, &buf_uc)) {
+        _db_reload_cache(db);
+    }
+
     int result = _db_dodelete(db, key);
+
+    _db_write_cache(db, buf_uc + 1);
 
     _unlock(db->idxf, SEEK_SET, 0, 0);
     _unlock(db->datf, SEEK_SET, 0, 0);
@@ -425,19 +449,9 @@ int db_store(struct DB* db, const char* key, const char* value) {
     _write_lock(db->idxf, SEEK_SET, 0, 0);
     _write_lock(db->datf, SEEK_SET, 0, 0);
 
-    //check if data is stale before writing
-    uint64_t file_uc;
-    _fseek(db->idxf, UPDATECOUNT_OFF, SEEK_SET);
-    _fread((void*)&file_uc, sizeof(uint64_t), 1, db->idxf);
-    uint64_t buf_uc = *((uint64_t*)(db->idx_buf + UPDATECOUNT_OFF));
-    if (file_uc > buf_uc) { //stale data in buffers
-        _fseek(db->idxf, 0, SEEK_END);
-        db->idx_len = _ftell(db->idxf);
-        _fread(db->idx_buf, sizeof(char), db->idx_len, db->idxf);
-        _fseek(db->datf, 0, SEEK_END);
-        db->dat_len = _ftell(db->datf); 
-        _fread(db->dat_buf, sizeof(char), db->dat_len, db->datf);
-        buf_uc = file_uc;
+    uint64_t buf_uc;
+    if (_db_buffers_stale(db, &buf_uc)) {
+        _db_reload_cache(db);
     }
 
     uint32_t idxrec_off;
@@ -455,12 +469,7 @@ int db_store(struct DB* db, const char* key, const char* value) {
         }
     }
 
-    //write buffers back to files
-    *((uint64_t*)(db->idx_buf + UPDATECOUNT_OFF)) = ++buf_uc;
-    _fseek(db->idxf, 0, SEEK_SET);
-    _fwrite((void*)db->idx_buf, sizeof(char), db->idx_len, db->idxf);
-    _fseek(db->datf, 0, SEEK_SET);
-    _fwrite((void*)db->dat_buf, sizeof(char), db->dat_len, db->datf);
+    _db_write_cache(db, buf_uc + 1);
 
     _unlock(db->idxf, SEEK_SET, 0, 0);
     _unlock(db->datf, SEEK_SET, 0, 0);
@@ -470,6 +479,11 @@ int db_store(struct DB* db, const char* key, const char* value) {
 char* db_fetch(struct DB* db, const char* key) {
     _read_lock(db->idxf, SEEK_SET, 0, 0);
     _read_lock(db->datf, SEEK_SET, 0, 0);
+
+    uint64_t buf_uc;
+    if (_db_buffers_stale(db, &buf_uc)) {
+        _db_reload_cache(db);
+    }
 
     uint32_t idxrec_off;
 
@@ -492,9 +506,16 @@ void db_rewind(struct DB* db) {
     db->idxrec_off = 0;
 }
 
+
+//NOTE: record will be skipped if inserted before the current db-chain_off
 char* db_nextrec(struct DB* db) {
     _read_lock(db->idxf, SEEK_SET, 0, 0);
     _read_lock(db->datf, SEEK_SET, 0, 0);
+
+    uint64_t buf_uc;
+    if (_db_buffers_stale(db, &buf_uc)) {
+        _db_reload_cache(db);
+    }
 
     char* buf;
     //increment db->chain_off until valid index record found

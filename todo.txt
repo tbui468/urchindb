@@ -1,7 +1,45 @@
 Look here for hints on creating a database:
     https://cs.brown.edu/courses/csci1270/website_2021/
 
-should write test that checks data persistence between multiple opens/closes
+Relational Database
+    Is it called relational because relational operators (along with equality operators) can be used to query 
+    specific data (whereas a key/value database can only query based on equality)?  Seems to make sense
+
+Schemas <----------start here with creating db_create()
+    db_open() can only be called on databases that already exist
+    User must call db_create(const char* name, char** field_names, enum DbTypes* field_types) to create a schema first <---------implement this function
+    db_insert() //create new record
+    db_update() //update existing record
+    db_delete() //delete exiting record
+    db_select(char* field_name, bool (*cmp)(void)); //selects all records where field satifies cmp function (eg, returns true)
+        will replace with SQL engine later.  This function is just a temporary solution to test fetching data
+        what kind of bytecode will the vm use?
+
+Trees
+    Let's say we use a binary tree to store records index by primary key
+        Would need to rebalance tree as more records are added to make sure it's balanced
+        otherwise a binary tree is pointless.  Also useful to rebalance trees if too high
+        for the number of nodes
+
+        How should the binary tree be stored?
+            after update_count and free list root, store the root node
+            Reading an index file will convert data to a binary tree
+            Writing a binary tree to file will do just that
+
+            Index by primary key
+                primary key
+                offset_count = 1
+                record offset in data file (primary keys are unique, so just one offset)
+
+            Index by age
+                age
+                offset_count = ???
+                record offset in data file (may not be unique, so could be more than one offset)
+
+        Need a function to rebalance tree after a few adds
+            traverse tree and find lowest and highest values
+            pick median value as the root
+            rebalance tree based off that new root
 
 Paging - NOTE: reset BUCKETS_MAX back to 1024 before running tests for cache buffers
     Test results without paging with 1024 buckets (bucket count didn't seem to make a noticeable difference)
@@ -15,11 +53,7 @@ Paging - NOTE: reset BUCKETS_MAX back to 1024 before running tests for cache buf
         n = 1000: 0.91s
         n = 2000: 2.66s
 
-    Cache buffer - multiprocess protection / locking / copy-on-write / checking timestamps for stagnant data
-        Should be slower than above, but hopefully a fair bit faster than direct file access.  Make the first
-        8 bytes hold a uint64_t unix time - whenever reading/writing, put a write lock/read lock on these 8 bytes
-        Timestamp is NOT fine-grain enough - it's in seconds, but a lot can happen in a second
-        Could use update count for now - use it to track updates.
+    Cache buffer - multiprocess protection / locking / copy-on-write / checking update count for stale data
 
         Single block
             n = 500:  0.30s
@@ -27,6 +61,7 @@ Paging - NOTE: reset BUCKETS_MAX back to 1024 before running tests for cache buf
             n = 2000: 2.53s
 
         4096 byte blocks
+            don't need this yet since single block speed is pretty fast - may change if files become significantly larger
 
 Implement key/value database
 
@@ -92,16 +127,6 @@ Implement key/value database
     db_select(db, "age", age_fun); //select all records where age field is passed to age_fun, and result is true
 
     SQL and engine to search database
-
-    Apply fine-grain locking
-        Where should the lock be applied?  (eg, what byte region)
-            Lock the entire chain - but other chains (including the freelist) can still be used by other processes
-
-    Does paging make database faster?
-        Write some tests that write/read to database.
-        Add pager that reads fixed data from the index and data files into memory
-        Unless data is written, just read data from buffers in memory instead of accessing disk
-        Only when something is written (eg, using db_store), do we write buffers back to disk
 
     Make it a distributed database - need to add network support
         how to keep all databases consistent?  !!!consensus!!!
