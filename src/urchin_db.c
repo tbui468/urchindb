@@ -12,24 +12,20 @@
 #define SUPER_OFF 0
 #define BUCKETS_MAX 4
 #define FREELIST_OFF 0 + BLOCK_SIZE
-#define HASHTAB_OFF 4 + BLOCK_SIZE
+#define HASHTAB_OFF 4 + BLOCK_SIZE //first 4 bytes is freelist
 
 struct DB {
-    FILE* datf;
     FILE* idxf;
     uint32_t chain_off;
     uint32_t idxrec_off;
-    char* dat_buf;
     char* idx_buf;
-    uint32_t dat_len;
     uint32_t idx_len;
 };
 
 struct IdxRec {
     uint32_t next_off;
-    uint32_t data_off;
-    uint32_t data_size;
     uint32_t key_size;
+    uint32_t data_size;
 };
 
 void err_quit(const char* msg) {
@@ -149,9 +145,9 @@ static FILE* _db_open(const char* filename, bool fill) {
         f = _fopen(filename, "w");
         if (fill) {
             void* ptr;
-            ptr = _calloc(BLOCK_SIZE + (BUCKETS_MAX + 3) * sizeof(uint32_t), sizeof(uint8_t)); //+2 for update count and +1 for freelist
+            ptr = _calloc(BLOCK_SIZE + (1 + BUCKETS_MAX) * sizeof(uint32_t), sizeof(uint8_t)); //+1 for freelist
             _write_lock(f, SEEK_SET, 0, 0);
-            _fwrite(ptr, sizeof(uint8_t), BLOCK_SIZE + (BUCKETS_MAX + 3) * sizeof(uint32_t), f); //+2 for update count and +1 for freelist
+            _fwrite(ptr, sizeof(uint8_t), BLOCK_SIZE + (1 + BUCKETS_MAX) * sizeof(uint32_t), f); //+1 for freelist
             _unlock(f, SEEK_SET, 0, 0);
             free(ptr);
         }
@@ -182,41 +178,44 @@ static inline uint32_t _db_read_next_off(struct DB* db, uint32_t idxrec_off) {
     return *((uint32_t*)(db->idx_buf + idxrec_off));
 }
 
-static inline uint32_t _db_read_data_off(struct DB* db, uint32_t idxrec_off) {
-    return *((uint32_t*)(db->idx_buf + idxrec_off + sizeof(uint32_t)));
+static inline uint32_t _db_read_key_size(struct DB* db, uint32_t idxrec_off) {
+    return *((uint32_t*)(db->idx_buf + idxrec_off + sizeof(uint32_t) * 1));
 }
 
 static inline uint32_t _db_read_data_size(struct DB* db, uint32_t idxrec_off) {
     return *((uint32_t*)(db->idx_buf + idxrec_off + sizeof(uint32_t) * 2));
 }
 
-static inline uint32_t _db_read_key_size(struct DB* db, uint32_t idxrec_off) {
-    return *((uint32_t*)(db->idx_buf + idxrec_off + sizeof(uint32_t) * 3));
-}
-
 static struct IdxRec _db_read_idxrec(struct DB* db, uint32_t idxrec_off) {
     struct IdxRec r;
+
     r.next_off = _db_read_next_off(db, idxrec_off);
-    r.data_off = _db_read_data_off(db, idxrec_off);
-    r.data_size = _db_read_data_size(db, idxrec_off);
     r.key_size = _db_read_key_size(db, idxrec_off);
+    r.data_size = _db_read_data_size(db, idxrec_off);
 
     return r;
 }
 
 static void _db_read_key(struct DB* db, uint32_t idxrec_off, char* key) {
     uint32_t key_size = _db_read_key_size(db, idxrec_off);
-    _db_read(key, db->idx_buf + idxrec_off + sizeof(uint32_t) * 4, key_size);
+    _db_read(key, db->idx_buf + idxrec_off + sizeof(uint32_t) * 3, key_size);
 }
 
 static void _db_read_data(struct DB* db, uint32_t idxrec_off, char* data) {
-    uint32_t data_off = _db_read_data_off(db, idxrec_off);
+    uint32_t key_size = _db_read_key_size(db, idxrec_off);
     uint32_t data_size = _db_read_data_size(db, idxrec_off);
-    _db_read(data, db->dat_buf + data_off, data_size);
+    _db_read(data, db->idx_buf + idxrec_off + sizeof(uint32_t) * 3 + key_size, data_size);
 }
 
-//returns 0 if record not found
-//used by db_store (to check for duplicates) and db_fetch
+static void _db_write_key(struct DB* db, uint32_t idxrec_off, const char* key) {
+    _db_write(db->idx_buf + idxrec_off + sizeof(uint32_t) * 3, key, strlen(key));
+}
+
+static void _db_write_data(struct DB* db, uint32_t idxrec_off, const char* data) {
+    uint32_t key_size = _db_read_key_size(db, idxrec_off);
+    _db_write(db->idx_buf + idxrec_off + sizeof(uint32_t) * 3 + key_size, data, strlen(data));
+}
+
 static uint32_t _db_find_idxrec_off(struct DB* db, const char* key) {
     uint32_t bucket_offset = _hash_key(key) % BUCKETS_MAX * sizeof(uint32_t) + HASHTAB_OFF;
     uint32_t next_off = *((uint32_t*)(db->idx_buf + bucket_offset));
@@ -235,22 +234,14 @@ static uint32_t _db_find_idxrec_off(struct DB* db, const char* key) {
         prev_off = 0;
     }
 
+    //returns 0 if record with given key not found
     return prev_off;
 }
 
-static void _db_write_idxrec(struct DB* db, uint32_t off, struct IdxRec* ir) {
-    *((uint32_t*)(db->idx_buf + off)) = ir->next_off;
-    *((uint32_t*)(db->idx_buf + off + sizeof(uint32_t))) = ir->data_off;
-    *((uint32_t*)(db->idx_buf + off + sizeof(uint32_t) * 2)) = ir->data_size;
-    *((uint32_t*)(db->idx_buf + off + sizeof(uint32_t) * 3)) = ir->key_size;
-}
-
-static void _db_write_key(struct DB* db, uint32_t off, const char* key) {
-    _db_write(db->idx_buf + off + sizeof(uint32_t) * 4, key, strlen(key));
-}
-
-static void _db_write_data(struct DB* db, uint32_t data_off, const char* data) {
-    _db_write(db->dat_buf + data_off, data, strlen(data));
+static void _db_write_idxrec(struct DB* db, uint32_t idxrec_off, struct IdxRec* ir) {
+    *((uint32_t*)(db->idx_buf + idxrec_off)) = ir->next_off;
+    *((uint32_t*)(db->idx_buf + idxrec_off + sizeof(uint32_t) * 1)) = ir->key_size;
+    *((uint32_t*)(db->idx_buf + idxrec_off + sizeof(uint32_t) * 2)) = ir->data_size;
 }
 
 static void _db_remove_idxrec_from_chain(struct DB* db, uint32_t idxrec_off, uint32_t bucket_off) {
@@ -272,58 +263,27 @@ static void _db_insert_idxrec_into_chain(struct DB* db, uint32_t idxrec_off, uin
 }
 
 
-
-//return offset of free index record/data record
-//internally will rerrange free index records and data records
-//returns 0 if no free pair found
 static uint32_t _db_new_idxrec(struct DB* db, const char* key, const char* value) {
     assert(!_db_find_idxrec_off(db, key));
     uint32_t next_off = *((uint32_t*)(db->idx_buf + FREELIST_OFF));
 
-    //finds first that fits
-    uint32_t idxrec_keylen_fit = 0;
-    uint32_t idxrec_vallen_fit = 0;
-
     while (next_off) {
         struct IdxRec r = _db_read_idxrec(db, next_off);
-        uint32_t key_size = r.key_size;
-
-        if (!idxrec_keylen_fit && key_size >= strlen(key)) {
-            idxrec_keylen_fit = next_off;
+        if (strlen(key) + strlen(value) <= r.key_size + r.data_size) {
+            _db_remove_idxrec_from_chain(db, next_off, FREELIST_OFF);
+            return next_off;
         }
-
-        if (!idxrec_vallen_fit && r.data_size >= strlen(value)) {
-            idxrec_vallen_fit = next_off;
-        }
-
-        if (idxrec_keylen_fit && idxrec_vallen_fit)
-            break;
 
         next_off = _db_read_next_off(db, next_off);
     }
-
-    if (idxrec_keylen_fit != 0 && idxrec_vallen_fit != 0) {
-        //swap data offsets so that idxrec_keylen_fit has fitting data record
-        uint32_t first = _db_read_data_off(db, idxrec_keylen_fit);
-        uint32_t second = _db_read_data_off(db, idxrec_vallen_fit);
-
-        *((uint32_t*)(db->idx_buf + idxrec_keylen_fit + sizeof(uint32_t))) = second;
-        *((uint32_t*)(db->idx_buf + idxrec_vallen_fit + sizeof(uint32_t))) = first;
-      
-        _db_remove_idxrec_from_chain(db, idxrec_keylen_fit, FREELIST_OFF);
-        return idxrec_keylen_fit;
-    }
    
-    //no free index record/data record large enough
-    uint32_t idx_off = db->idx_len;
-    uint32_t data_off = db->dat_len;
-    db->idx_len += sizeof(uint32_t) * 4 + strlen(key);
-    db->dat_len += strlen(value);
+    uint32_t idxrec_off = db->idx_len;
+    db->idx_len += sizeof(uint32_t) * 3 + strlen(key) + strlen(value);
 
-    struct IdxRec r = {0, data_off, strlen(value), strlen(key) }; //0 is temporary - caller should fill this in before writing to disk/buffer
-    _db_write_idxrec(db, idx_off, &r);
+    struct IdxRec r = { 0, strlen(key), strlen(value) }; //0 is temporary - caller's responsibility to fill in
+    _db_write_idxrec(db, idxrec_off, &r);
     
-    return idx_off;
+    return idxrec_off;
 }
 
 static bool _db_buffers_stale(struct DB* db, uint64_t* bigger_ts, uint64_t* bigger_uc) {
@@ -348,11 +308,6 @@ static void _db_reload_cache(struct DB* db) {
     db->idx_len = _ftell(db->idxf);
     _fseek(db->idxf, 0, SEEK_SET);
     _fread(db->idx_buf, sizeof(char), db->idx_len, db->idxf);
-
-    _fseek(db->datf, 0, SEEK_END);
-    db->dat_len = _ftell(db->datf); 
-    _fseek(db->datf, 0, SEEK_SET);
-    _fread(db->dat_buf, sizeof(char), db->dat_len, db->datf);
 }
 
 static void _db_write_cache(struct DB* db, uint64_t ts, uint64_t update_count) {
@@ -360,8 +315,6 @@ static void _db_write_cache(struct DB* db, uint64_t ts, uint64_t update_count) {
     *((uint64_t*)(db->idx_buf + SUPER_OFF + sizeof(uint64_t))) = update_count;
     _fseek(db->idxf, 0, SEEK_SET);
     _fwrite((void*)db->idx_buf, sizeof(char), db->idx_len, db->idxf);
-    _fseek(db->datf, 0, SEEK_SET);
-    _fwrite((void*)db->dat_buf, sizeof(char), db->dat_len, db->datf);
 }
 
 struct DB* db_open(const char* dbname) {
@@ -377,15 +330,10 @@ struct DB* db_open(const char* dbname) {
     filename[len + 4] = 0;
     db->idxf = _db_open(filename, true);
 
-    memcpy(filename + len, ".dat", 4);
-    filename[len + 4] = 0;
-    db->datf = _db_open(filename, false);
-
     db->chain_off = 1;
     db->idxrec_off = 0;
 
     db->idx_buf = _calloc(BLOCK_SIZE * BLOCK_SIZE, sizeof(char));
-    db->dat_buf = _calloc(BLOCK_SIZE * BLOCK_SIZE, sizeof(char));
 
     _db_reload_cache(db);
 
@@ -394,9 +342,7 @@ struct DB* db_open(const char* dbname) {
 
 void db_close(struct DB* db) {
     fclose(db->idxf);
-    fclose(db->datf);
     free(db->idx_buf);
-    free(db->dat_buf);
 }
 
 int _db_dodelete(struct DB* db, const char* key) {
@@ -425,7 +371,6 @@ int _db_dodelete(struct DB* db, const char* key) {
 
 int db_delete(struct DB* db, const char* key) {
     _write_lock(db->idxf, SEEK_SET, 0, 0);
-    _write_lock(db->datf, SEEK_SET, 0, 0);
 
     uint64_t file_ts;
     uint64_t file_uc;
@@ -439,7 +384,6 @@ int db_delete(struct DB* db, const char* key) {
     _db_write_cache(db, ts, ts == file_ts ? file_uc + 1 : 0);
 
     _unlock(db->idxf, SEEK_SET, 0, 0);
-    _unlock(db->datf, SEEK_SET, 0, 0);
     return result;
 }
 
@@ -450,16 +394,15 @@ static void _db_doinsert(struct DB* db, const char* key, const char* value) {
     _db_insert_idxrec_into_chain(db, record_offset, bucket_offset);
 
     struct IdxRec r = _db_read_idxrec(db, record_offset);
-    r.data_size = strlen(value);
     r.key_size = strlen(key);
+    r.data_size = strlen(value);
     _db_write_idxrec(db, record_offset, &r);
     _db_write_key(db, record_offset, key);
-    _db_write_data(db, r.data_off, value);
+    _db_write_data(db, record_offset, value);
 }
 
 int db_store(struct DB* db, const char* key, const char* value) {
     _write_lock(db->idxf, SEEK_SET, 0, 0);
-    _write_lock(db->datf, SEEK_SET, 0, 0);
 
     uint64_t file_ts;
     uint64_t file_uc;
@@ -475,7 +418,7 @@ int db_store(struct DB* db, const char* key, const char* value) {
         if (strlen(value) <= r.data_size) {
             r.data_size = strlen(value);
             _db_write_idxrec(db, idxrec_off, &r);
-            _db_write_data(db, r.data_off, value);
+            _db_write_data(db, idxrec_off, value);
         } else {
             _db_dodelete(db, key);
             _db_doinsert(db, key, value);
@@ -486,13 +429,11 @@ int db_store(struct DB* db, const char* key, const char* value) {
     _db_write_cache(db, ts, ts == file_ts ? file_uc + 1 : 0);
 
     _unlock(db->idxf, SEEK_SET, 0, 0);
-    _unlock(db->datf, SEEK_SET, 0, 0);
     return 0;
 }
 
 char* db_fetch(struct DB* db, const char* key) {
     _read_lock(db->idxf, SEEK_SET, 0, 0);
-    _read_lock(db->datf, SEEK_SET, 0, 0);
 
     uint64_t file_ts;
     uint64_t file_uc;
@@ -512,7 +453,6 @@ char* db_fetch(struct DB* db, const char* key) {
     buf[data_size] = '\0';
 
     _unlock(db->idxf, SEEK_SET, 0, 0);
-    _unlock(db->datf, SEEK_SET, 0, 0);
     return buf;
 }
 
@@ -525,7 +465,6 @@ void db_rewind(struct DB* db) {
 //NOTE: record will be skipped if inserted before the current db-chain_off
 char* db_nextrec(struct DB* db) {
     _read_lock(db->idxf, SEEK_SET, 0, 0);
-    _read_lock(db->datf, SEEK_SET, 0, 0);
 
     uint64_t file_ts;
     uint64_t file_uc;
@@ -560,7 +499,6 @@ char* db_nextrec(struct DB* db) {
     }
 
     _unlock(db->idxf, SEEK_SET, 0, 0);
-    _unlock(db->datf, SEEK_SET, 0, 0);
     return buf;
 }
 

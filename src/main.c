@@ -11,7 +11,8 @@ int standard_test() {
 
     if (db_store(db, "dog", "dog data") != 0)
         err_quit("db_store failed");
-    
+    if (db_store(db, "cat", "cat data") != 0)
+        err_quit("db_store failed");
     if (db_store(db, "cat", "cat data") != 0)
         err_quit("db_store failed");
     if (db_store(db, "bird", "bird data") != 0)
