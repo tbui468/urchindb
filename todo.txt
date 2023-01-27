@@ -1,9 +1,70 @@
 Look here for hints on creating a database:
     https://cs.brown.edu/courses/csci1270/website_2021/
 
-Relational Database
-    Is it called relational because relational operators (along with equality operators) can be used to query 
-    specific data (whereas a key/value database can only query based on equality)?  Seems to make sense
+Andy Pavlo lectures from Carnegie Mellon University are really good!!!
+    https://www.youtube.com/@CMUDatabaseGroup
+
+How to deal with changes in data file?
+    right now, if writing to index file or if buffer cache is stale,
+    the entirety of both files is loaded into the buffer cache from disk
+    But we want to only load stale blocks
+
+    Solution: put ALL data into one file
+             next, key size, data size, key, data
+             would solve a lot of problems and simplify things significantly
+             this will also make converting from hash table to trees easier later
+             This will require a fair bit of refactoring
+
+Or try to make the size/time relationship linear (quadratic now) or even logarithmic
+    One option is only copying dirty blocks instead of entire file into buffer
+    make Block 0 (first page) the superblock that holds metadata (including dirty bits)
+    whenever a different block is dirty, update a bit so that we know when to copy/write to disk
+    All reads/writes will check bits and reload buffer cache from disk if any dirty bits found
+
+        Make first BLOCK_SIZE metadata
+        When calling _calloc, make sure to include include meta data block
+
+        Right now, we need to read the entire file into memory - this is not possible if file too big
+            need to only load in parts of file - need to decide on eviction policy to determine which
+            blocks stay in memory.
+
+    Right now, we are reading in update count for the entire file/buffer.  Need to separate that in reading
+        individual blocks.
+
+        Might be time to separate into multiple translation units with bettered defined interfaces:
+            cli.c - this is the public interface other programs/users have access to
+                db_create - will add this later to allow table creation
+                db_open
+                db_store
+                db_fetch
+                db_rewind - will remove later
+                db_nextrec - will remove later
+                db_query(condition); - will replace with SQL engine later
+            cache.c (either hash table or a tree representation)
+                cache_new_idxrec
+                cache_insert_idxrec
+                cache_remove_idxrec
+                data representation in buffer cache (either tree or hash table)
+                includes finding new index records (either allocating a new one, or reusing one from the freelist)
+                writing and reading data from the buffer cache
+                writes dirty bits to allow pager to know which blocks to write/update from disk
+            pager.c (this will take care of the OS interface for now)
+                pager_reload_cache()
+                pager_write_cache()
+                pager_
+
+Support multi-threading
+    Write tests that show multi-threading fails (use pthreads)
+    Implement locks to pass tests
+
+Could make two front-ends, one for SQL and the other for QUEL.
+
+Frontend - command line interface, parser, generator, vm
+Backend - tree, pager, and OS interface
+    cli.c
+    tree.c
+    pager.c
+    osi.c
 
 Schemas <----------start here with creating db_create()
     db_open() can only be called on databases that already exist
@@ -48,12 +109,12 @@ Paging - NOTE: reset BUCKETS_MAX back to 1024 before running tests for cache buf
         n = 1000: 39.54s
         n = 2000: 156.34
 
-    Cache buffer - single process without any multiprocessor protection
+    Buffer Cache - single process without any multiprocessor protection
         n = 500:  0.29s
         n = 1000: 0.91s
         n = 2000: 2.66s
 
-    Cache buffer - multiprocess protection / file locking / copy-on-write / update stale data on read
+    Buffer Cache - multiprocess protection / file locking / copy-on-write / update stale data on read
 
         Single block
             n = 500:   0.31s
@@ -63,8 +124,20 @@ Paging - NOTE: reset BUCKETS_MAX back to 1024 before running tests for cache buf
             n = 8000:  36.08s
             n = 16000: 142.51s
 
-        4096 byte blocks
-            don't need this yet since single block speed is pretty fast - may change if files become significantly larger
+        Fine-grain buffer cache reloading using multiple blocks
+            256 byte blocks 
+                n = 500
+                n = 1000
+                n = 2000
+                n = 4000
+                n = 8000
+                n = 16000
+
+            1024 byte blocks
+            4096 byte blocks
+
+    Multithreading
+    
 
 Implement key/value database
 

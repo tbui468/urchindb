@@ -5,12 +5,14 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <fcntl.h>
+#include <errno.h>
+#include <time.h>
 
+#define BLOCK_SIZE 4096
+#define SUPER_OFF 0
 #define BUCKETS_MAX 4
-#define UPDATECOUNT_OFF 0
-#define FREELIST_OFF 8
-#define HASHTAB_OFF 12
-#define PAGE_SIZE 4096
+#define FREELIST_OFF 0 + BLOCK_SIZE
+#define HASHTAB_OFF 4 + BLOCK_SIZE
 
 struct DB {
     FILE* datf;
@@ -31,7 +33,7 @@ struct IdxRec {
 };
 
 void err_quit(const char* msg) {
-    printf("%s\n", msg);
+    perror(msg);
     exit(1);
 }
 
@@ -89,8 +91,9 @@ static void _db_write(char* dst, const char* src, size_t count) {
 
 static size_t _fread(void* ptr, size_t size, size_t count, FILE* f) {
     size_t res;
-    if ((res = fread(ptr, size, count, f)) != count)
+    if ((res = fread(ptr, size, count, f)) != count) {
         err_quit("fread failed");
+    }
 
     return res;
 }
@@ -146,9 +149,9 @@ static FILE* _db_open(const char* filename, bool fill) {
         f = _fopen(filename, "w");
         if (fill) {
             void* ptr;
-            ptr = _calloc(BUCKETS_MAX + 3, sizeof(uint32_t)); //+2 for update count and +1 for freelist
+            ptr = _calloc(BLOCK_SIZE + (BUCKETS_MAX + 3) * sizeof(uint32_t), sizeof(uint8_t)); //+2 for update count and +1 for freelist
             _write_lock(f, SEEK_SET, 0, 0);
-            _fwrite(ptr, sizeof(uint32_t), BUCKETS_MAX + 3, f); //+2 for update count and +1 for freelist
+            _fwrite(ptr, sizeof(uint8_t), BLOCK_SIZE + (BUCKETS_MAX + 3) * sizeof(uint32_t), f); //+2 for update count and +1 for freelist
             _unlock(f, SEEK_SET, 0, 0);
             free(ptr);
         }
@@ -323,15 +326,21 @@ static uint32_t _db_new_idxrec(struct DB* db, const char* key, const char* value
     return idx_off;
 }
 
-static bool _db_buffers_stale(struct DB* db, uint64_t* bigger_uc) {
+static bool _db_buffers_stale(struct DB* db, uint64_t* bigger_ts, uint64_t* bigger_uc) {
     uint64_t file_uc;
-    _fseek(db->idxf, UPDATECOUNT_OFF, SEEK_SET);
+    uint64_t file_ts;
+    _fseek(db->idxf, SUPER_OFF, SEEK_SET);
+    _fread((void*)&file_ts, sizeof(uint64_t), 1, db->idxf);
     _fread((void*)&file_uc, sizeof(uint64_t), 1, db->idxf);
-    uint64_t buf_uc = *((uint64_t*)(db->idx_buf + UPDATECOUNT_OFF));
 
-    *bigger_uc = file_uc > buf_uc ? file_uc : buf_uc;
+    uint64_t buf_ts = *((uint64_t*)(db->idx_buf + SUPER_OFF + sizeof(uint64_t)));
+    uint64_t buf_uc = *((uint64_t*)(db->idx_buf + SUPER_OFF));
 
-    return file_uc != buf_uc;
+    //file timestamp and update counter will always be bigger or equal to ones in buffer caches
+    *bigger_ts = file_ts;
+    *bigger_uc = file_uc;
+
+    return file_ts != buf_ts || file_uc != buf_uc;
 }
 
 static void _db_reload_cache(struct DB* db) {
@@ -346,8 +355,9 @@ static void _db_reload_cache(struct DB* db) {
     _fread(db->dat_buf, sizeof(char), db->dat_len, db->datf);
 }
 
-static void _db_write_cache(struct DB* db, uint64_t update_count) {
-    *((uint64_t*)(db->idx_buf + UPDATECOUNT_OFF)) = update_count;
+static void _db_write_cache(struct DB* db, uint64_t ts, uint64_t update_count) {
+    *((uint64_t*)(db->idx_buf + SUPER_OFF)) = ts;
+    *((uint64_t*)(db->idx_buf + SUPER_OFF + sizeof(uint64_t))) = update_count;
     _fseek(db->idxf, 0, SEEK_SET);
     _fwrite((void*)db->idx_buf, sizeof(char), db->idx_len, db->idxf);
     _fseek(db->datf, 0, SEEK_SET);
@@ -374,8 +384,8 @@ struct DB* db_open(const char* dbname) {
     db->chain_off = 1;
     db->idxrec_off = 0;
 
-    db->idx_buf = _calloc(PAGE_SIZE * PAGE_SIZE, sizeof(char));
-    db->dat_buf = _calloc(PAGE_SIZE * PAGE_SIZE, sizeof(char));
+    db->idx_buf = _calloc(BLOCK_SIZE * BLOCK_SIZE, sizeof(char));
+    db->dat_buf = _calloc(BLOCK_SIZE * BLOCK_SIZE, sizeof(char));
 
     _db_reload_cache(db);
 
@@ -417,14 +427,16 @@ int db_delete(struct DB* db, const char* key) {
     _write_lock(db->idxf, SEEK_SET, 0, 0);
     _write_lock(db->datf, SEEK_SET, 0, 0);
 
-    uint64_t buf_uc;
-    if (_db_buffers_stale(db, &buf_uc)) {
+    uint64_t file_ts;
+    uint64_t file_uc;
+    if (_db_buffers_stale(db, &file_ts, &file_uc)) {
         _db_reload_cache(db);
     }
 
     int result = _db_dodelete(db, key);
 
-    _db_write_cache(db, buf_uc + 1);
+    uint64_t ts = time(NULL);
+    _db_write_cache(db, ts, ts == file_ts ? file_uc + 1 : 0);
 
     _unlock(db->idxf, SEEK_SET, 0, 0);
     _unlock(db->datf, SEEK_SET, 0, 0);
@@ -449,8 +461,9 @@ int db_store(struct DB* db, const char* key, const char* value) {
     _write_lock(db->idxf, SEEK_SET, 0, 0);
     _write_lock(db->datf, SEEK_SET, 0, 0);
 
-    uint64_t buf_uc;
-    if (_db_buffers_stale(db, &buf_uc)) {
+    uint64_t file_ts;
+    uint64_t file_uc;
+    if (_db_buffers_stale(db, &file_ts, &file_uc)) {
         _db_reload_cache(db);
     }
 
@@ -469,7 +482,8 @@ int db_store(struct DB* db, const char* key, const char* value) {
         }
     }
 
-    _db_write_cache(db, buf_uc + 1);
+    uint64_t ts = time(NULL);
+    _db_write_cache(db, ts, ts == file_ts ? file_uc + 1 : 0);
 
     _unlock(db->idxf, SEEK_SET, 0, 0);
     _unlock(db->datf, SEEK_SET, 0, 0);
@@ -480,8 +494,9 @@ char* db_fetch(struct DB* db, const char* key) {
     _read_lock(db->idxf, SEEK_SET, 0, 0);
     _read_lock(db->datf, SEEK_SET, 0, 0);
 
-    uint64_t buf_uc;
-    if (_db_buffers_stale(db, &buf_uc)) {
+    uint64_t file_ts;
+    uint64_t file_uc;
+    if (_db_buffers_stale(db, &file_ts, &file_uc)) {
         _db_reload_cache(db);
     }
 
@@ -512,8 +527,9 @@ char* db_nextrec(struct DB* db) {
     _read_lock(db->idxf, SEEK_SET, 0, 0);
     _read_lock(db->datf, SEEK_SET, 0, 0);
 
-    uint64_t buf_uc;
-    if (_db_buffers_stale(db, &buf_uc)) {
+    uint64_t file_ts;
+    uint64_t file_uc;
+    if (_db_buffers_stale(db, &file_ts, &file_uc)) {
         _db_reload_cache(db);
     }
 
