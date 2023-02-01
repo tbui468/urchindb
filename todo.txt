@@ -4,16 +4,62 @@ Look here for hints on creating a database:
 Andy Pavlo lectures from Carnegie Mellon University are really good!!!
     https://www.youtube.com/@CMUDatabaseGroup
 
-How to deal with changes in data file?
-    right now, if writing to index file or if buffer cache is stale,
-    the entirety of both files is loaded into the buffer cache from disk
-    But we want to only load stale blocks
+1 Relational Model and Relational Algebra
+    What is the difference between a data model and schema?
+        A model includes relational, key/value, NoSQL, etc
+        schema is the actual attributes and data types of a given relation
+    What does DML stand for?
+        Data manipulation language
+    What is the difference between a set and a bag?
+        sets don't contain duplicates, and bags do (or at least can)
+    Explain each basic relational algebra operator (what SQL command corresponds to it):
+        select
+        projection
+        union
+        intersect
+        difference
+        product
+        join
+    Are there more relational algebra operators in modern databases?
+        Yes!  Those 7 are just the most common/primitive operators
 
-    Solution: put ALL data into one file
-             next, key size, data size, key, data
-             would solve a lot of problems and simplify things significantly
-             this will also make converting from hash table to trees easier later
-             This will require a fair bit of refactoring
+TODO:
+    db_fetch
+
+    Refactor files:
+        urchindb.c
+        table.c
+            these functions require a massive refactor to remove repeated code/make it more readable
+        utility.c
+        pager.c
+        main.c
+    db_rewind and db_nextrec - need these two to test how quickly we can write/read
+
+Table sees data in contiguous memory - pager does all the loading/dropping of blocks/setting flags for dirty blocks
+
+!!!This is the interface for the pager!!! finish db_store <--------------START HERE
+    Turn warnings back on after basic functionality
+    pager_write(offset)
+    pager_read(offset)
+        The pager will load and throw away (writing to disk if dirty) blocks, and table.c
+        doesn't have to worry about it
+
+    Use this when working with the table (and later tree)
+    
+Once the block system works, rewrite so that we separate data and paging:
+    urchin_db.c (public functions for client code)
+    Back-end
+        table.c (hash table - change this to tree.c later when changing to relational database)
+        pager.c (this includes the interface between the pager and OS)
+        logger.c (write-ahead logging or shadowing)
+        osi.c (interface to allow usage with linux/macos/windows)
+    utility.c (wrappers and error handling)
+    Switch to tree.c format for row-relational database
+
+    Front-end
+        parser.c (parse SQL queries)
+        generator.c (generate machine code to run on vm)
+        vm.c (run machine code to manipulate data tree)
 
 Or try to make the size/time relationship linear (quadratic now) or even logarithmic
     One option is only copying dirty blocks instead of entire file into buffer
@@ -116,25 +162,13 @@ Paging - NOTE: reset BUCKETS_MAX back to 1024 before running tests for cache buf
 
     Buffer Cache - multiprocess protection / file locking / copy-on-write / update stale data on read
 
-        Single block
-            n = 500:   0.31s
-            n = 1000:  1.01s
-            n = 2000:  2.87s
-            n = 4000:  9.40s
-            n = 8000:  36.08s
-            n = 16000: 142.51s
+        Single block with 1024 buckets
+            n = 8000:  12.71s
+            n = 16000: 46.94s
+            n = 32000: 189.21s
 
-        Fine-grain buffer cache reloading using multiple blocks
-            256 byte blocks 
-                n = 500
-                n = 1000
-                n = 2000
-                n = 4000
-                n = 8000
-                n = 16000
-
-            1024 byte blocks
-            4096 byte blocks
+        Loading in/out blocks based on least-recently used eviction policy
+        Need this since database may be too big to hold entirely in memory
 
     Multithreading
     

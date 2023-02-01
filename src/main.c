@@ -3,20 +3,37 @@
 #include <string.h>
 #include <stdbool.h>
 #include <time.h>
+#include <unistd.h>
 #include "urchin_db.h"
 
 int standard_test() {
     struct DB* db = db_open("test");
 
-
     if (db_store(db, "dog", "dog data") != 0)
         err_quit("db_store failed");
-    if (db_store(db, "cat", "cat data") != 0)
+    if (db_store(db, "dog", "new dogaaaaa") != 0)
         err_quit("db_store failed");
     if (db_store(db, "cat", "cat data") != 0)
         err_quit("db_store failed");
     if (db_store(db, "bird", "bird data") != 0)
         err_quit("db_store failed");
+    if (db_store(db, "lion", "lion data") != 0)
+        err_quit("db_store failed");
+    if (db_store(db, "bat", "bat data") != 0)
+        err_quit("db_store failed");
+
+    /*
+    char* result;
+    if (result = db_fetch(db, "dog")) {
+        printf("dog: %s\n", result);
+    }
+    if (result = db_fetch(db, "cat")) {
+        printf("cat: %s\n", result);
+    }
+    if (result = db_fetch(db, "bird")) {
+        printf("bird: %s\n", result);
+    }*/
+    /*
     if (db_store(db, "lion", "lion data") != 0)
         err_quit("db_store failed");
     if (db_store(db, "bat", "bat data") != 0)
@@ -37,7 +54,7 @@ int standard_test() {
         printf("%s: %s\n", key, value);
         free(key);
         free(value);
-    }
+    }*/
 
     db_close(db);
     return 0;
@@ -231,7 +248,7 @@ int paging_test(uint32_t n) {
 int main(int argc, char** argv) {
     standard_test();
     //data_persistence_test();
-    //paging_test(1000);
+    //paging_test(8000);
     //file_locking_test(argc, argv);
     //stale_fetch_test();
     //stale_delete_test();
