@@ -440,7 +440,7 @@ static int _table_delete_rec(struct DB* db, const char* key) {
     uint32_t chain_off = _hash_key(key) % BUCKETS_MAX * sizeof(uint32_t) + HASHTAB_OFF;
     uint32_t cur;
     pager_read(db, chain_off, &cur, sizeof(uint32_t));
-    uint32_t prev = cur;
+    uint32_t prev = chain_off;
 
     while (cur) {
         struct Record r = _table_read_rec(db, cur);
@@ -449,7 +449,7 @@ static int _table_delete_rec(struct DB* db, const char* key) {
 
         if (strncmp(rec_key, key, r.key_len) == 0) {
             //remove from chain
-            pager_write(db, prev, (char*)&r.next_off, sizeof(uint32_t));
+            pager_write(db, prev, (char*)&r.next_off, sizeof(uint32_t)); 
             //insert into freelist
             uint32_t next_free;
             pager_read(db, FREELIST_OFF, &next_free, sizeof(uint32_t));
@@ -538,14 +538,35 @@ int db_store(struct DB* db, const char* key, const char* data) {
 }
 
 void db_delete(struct DB* db, const char* key) {
-    //need to write lock and also read metadata
-    //_table_delete_rec(db, key);
+    _write_lock(db->idxf, SEEK_SET, 0, 0);
+    _table_read_metadata(db);
+
+    int res = _table_delete_rec(db, key);
+    printf("_table_delete_result %d\n", res);
+
+    _table_commit(db);
+    _unlock(db->idxf, SEEK_SET, 0, 0);
 }
 
 char* db_fetch(struct DB* db, const char* key) {
     _read_lock(db->idxf, SEEK_SET, 0, 0);
+    _table_read_metadata(db);
+
+    uint32_t rec_off;
+    char* data = NULL;
+    if ((rec_off = _table_find_rec(db, key)) != 0) {
+        uint32_t key_size;
+        uint32_t data_size;
+        pager_read(db, rec_off + sizeof(uint32_t) , &key_size, sizeof(uint32_t));
+        pager_read(db, rec_off + sizeof(uint32_t) * 2, &data_size, sizeof(uint32_t));
+
+        data = _malloc(data_size + 1); //+1 for null terminator
+        pager_read(db, rec_off + sizeof(uint32_t) * 3 + key_size, data, data_size);
+        data[data_size] = '\0';
+    }
+
     _unlock(db->idxf, SEEK_SET, 0, 0);
-    return NULL; //TODO: need to return actual data
+    return data;
 }
 
 void db_rewind(struct DB* db) {

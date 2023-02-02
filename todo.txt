@@ -22,9 +22,9 @@ Andy Pavlo lectures from Carnegie Mellon University are really good!!!
         join
     Are there more relational algebra operators in modern databases?
         Yes!  Those 7 are just the most common/primitive operators
-
 TODO:
-    db_fetch
+    db_rewind
+    db_nextrec
 
     Refactor files:
         urchindb.c

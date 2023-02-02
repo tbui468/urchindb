@@ -22,17 +22,30 @@ int standard_test() {
     if (db_store(db, "bat", "bat data") != 0)
         err_quit("db_store failed");
 
-    /*
+    //db_delete(db, "dog");
     char* result;
     if (result = db_fetch(db, "dog")) {
         printf("dog: %s\n", result);
+        free(result);
+    } else {
+        printf("dog key not found\n");
     }
     if (result = db_fetch(db, "cat")) {
         printf("cat: %s\n", result);
+        free(result);
     }
     if (result = db_fetch(db, "bird")) {
         printf("bird: %s\n", result);
-    }*/
+        free(result);
+    }
+    if (result = db_fetch(db, "lion")) {
+        printf("lion: %s\n", result);
+        free(result);
+    }
+    if (result = db_fetch(db, "bat")) {
+        printf("bat: %s\n", result);
+        free(result);
+    }
     /*
     if (db_store(db, "lion", "lion data") != 0)
         err_quit("db_store failed");
