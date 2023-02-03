@@ -23,8 +23,7 @@ Andy Pavlo lectures from Carnegie Mellon University are really good!!!
     Are there more relational algebra operators in modern databases?
         Yes!  Those 7 are just the most common/primitive operators
 TODO:
-    db_rewind
-    db_nextrec
+    run metrics to see how much slower it is now
 
     Refactor files:
         urchindb.c
@@ -33,19 +32,12 @@ TODO:
         utility.c
         pager.c
         main.c
-    db_rewind and db_nextrec - need these two to test how quickly we can write/read
+
+    Make linked list of blocks doubling linked
+    start block search from most recently access block instead of least recently used
 
 Table sees data in contiguous memory - pager does all the loading/dropping of blocks/setting flags for dirty blocks
 
-!!!This is the interface for the pager!!! finish db_store <--------------START HERE
-    Turn warnings back on after basic functionality
-    pager_write(offset)
-    pager_read(offset)
-        The pager will load and throw away (writing to disk if dirty) blocks, and table.c
-        doesn't have to worry about it
-
-    Use this when working with the table (and later tree)
-    
 Once the block system works, rewrite so that we separate data and paging:
     urchin_db.c (public functions for client code)
     Back-end
@@ -169,6 +161,11 @@ Paging - NOTE: reset BUCKETS_MAX back to 1024 before running tests for cache buf
 
         Loading in/out blocks based on least-recently used eviction policy
         Need this since database may be too big to hold entirely in memory
+            n = 2000: 1.97s
+            n = 4000: 4.30s
+            n = 8000: 12.28s
+            n = 16000: 35.65s
+            n = 32000: 91.08s
 
     Multithreading
     

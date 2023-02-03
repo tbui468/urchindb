@@ -9,18 +9,19 @@
 #include <time.h>
 
 #define BLOCK_SIZE 4096
-#define BLOCKS_MAX BLOCK_SIZE / 16
+#define SUPER_SIZE BLOCK_SIZE
+#define BLOCKS_MAX BLOCK_SIZE / (sizeof(uint32_t) * 4)
 #define SUPER_OFF 0
-#define BUCKETS_MAX 4
-#define FREELIST_OFF 0 + BLOCK_SIZE
-#define HASHTAB_OFF sizeof(uint32_t) + BLOCK_SIZE //first 4 bytes is freelist
+#define BUCKETS_MAX 1024
+#define FREELIST_OFF SUPER_SIZE
+#define HASHTAB_OFF sizeof(uint32_t) + SUPER_SIZE //first 4 bytes is freelist
 #define RECORD_OFF HASHTAB_OFF + sizeof(uint32_t) * BUCKETS_MAX
 #define KEY_OFF sizeof(uint32_t) * 3
 
 
 static struct TimeStamp {
-    uint64_t seconds;
-    uint64_t counter;
+    uint32_t seconds;
+    uint32_t counter;
 };
 
 struct Block {
@@ -36,7 +37,6 @@ struct DB {
     uint32_t chain_off;
     uint32_t idxrec_off;
     struct Block* blocks;
-    //TODO: add a pointer to tail of blocks too so most-recently accessed block can be inserted quickly to end of linked list
     struct Block* super;
 };
 
@@ -197,7 +197,7 @@ struct DB* db_open(const char* dbname) {
     db->idxf = _db_open(filename, true);
     _fseek(db->idxf, 0, SEEK_END);
 
-    db->chain_off = 1;
+    db->chain_off = FREELIST_OFF;
     db->idxrec_off = 0;
 
     struct Block* blocks = _calloc(BLOCKS_MAX, sizeof(struct Block));
@@ -222,9 +222,9 @@ inline static uint32_t _pager_off_to_idx(uint32_t file_off) {
 }
 
 static bool _pager_block_is_stale(struct Block* meta, struct Block* b) {
-    uint32_t block_meta_off = sizeof(uint64_t) * 2 * b->idx;
-    uint64_t seconds = *((uint64_t*)(&meta->buf[block_meta_off]));
-    uint64_t counter = *((uint64_t*)(&meta->buf[block_meta_off + sizeof(uint64_t)]));
+    uint32_t block_meta_off = sizeof(uint32_t) * 2 * b->idx;
+    uint32_t seconds = *((uint32_t*)(&meta->buf[block_meta_off]));
+    uint32_t counter = *((uint32_t*)(&meta->buf[block_meta_off + sizeof(uint32_t)]));
     return seconds > b->timestamp.seconds || (seconds == b->timestamp.seconds && counter > b->timestamp.counter);
 }
 
@@ -247,9 +247,9 @@ inline static uint64_t _pager_file_size(FILE* f) {
 }
 
 static void _pager_write_from_block(struct DB* db, struct Block* b, struct TimeStamp ts) {
-    uint32_t ts_off = b->idx * sizeof(uint64_t) * 2;
-    *((uint64_t*)(&db->super->buf[ts_off])) = ts.seconds;
-    *((uint64_t*)(&db->super->buf[ts_off + sizeof(uint64_t)])) = ts.counter;
+    uint32_t ts_off = b->idx * sizeof(uint32_t) * 2;
+    *((uint32_t*)(&db->super->buf[ts_off])) = ts.seconds;
+    *((uint32_t*)(&db->super->buf[ts_off + sizeof(uint32_t)])) = ts.counter;
 
     uint32_t to_end = _pager_file_size(db->idxf) - b->idx * BLOCK_SIZE;
     _fseek(db->idxf, b->idx * BLOCK_SIZE, SEEK_SET);
@@ -267,9 +267,9 @@ static void _pager_read_into_block(struct DB* db, struct Block* b, uint32_t idx)
     b->dirty = false;
     b->idx = idx;
 
-    _fseek(db->idxf, SUPER_OFF + b->idx * sizeof(uint64_t) * 2, SEEK_SET);
-    _fread((void*)&b->timestamp.seconds, sizeof(uint64_t), 1, db->idxf);
-    _fread((void*)&b->timestamp.counter, sizeof(uint64_t), 1, db->idxf);
+    _fseek(db->idxf, SUPER_OFF + b->idx * sizeof(uint32_t) * 2, SEEK_SET);
+    _fread((void*)&b->timestamp.seconds, sizeof(uint32_t), 1, db->idxf);
+    _fread((void*)&b->timestamp.counter, sizeof(uint32_t), 1, db->idxf);
 }
 
 //uses least-recently used (LRU) eviction policy, and returns new block
@@ -495,12 +495,12 @@ static void _table_commit(struct DB* db) {
         if (cur->dirty) {
             struct TimeStamp ts = _pager_new_stamp(cur->timestamp);
             _pager_write_from_block(db, cur, ts);
-
             /*testing*/
-            _fseek(db->idxf, 0, SEEK_END);
-            uint32_t max = _ftell(db->idxf) - cur->idx * BLOCK_SIZE;
-            _fseek(db->idxf, cur->idx * BLOCK_SIZE, SEEK_SET);
-            printf("commiting %u bytes from block %u\n", max < BLOCK_SIZE ? max : BLOCK_SIZE, cur->idx);
+            //printf("block %u\n", cur->idx);
+            //_fseek(db->idxf, 0, SEEK_END);
+            //uint32_t max = _ftell(db->idxf) - cur->idx * BLOCK_SIZE;
+            //_fseek(db->idxf, cur->idx * BLOCK_SIZE, SEEK_SET);
+            //printf("commiting %u bytes from block %u\n", max < BLOCK_SIZE ? max : BLOCK_SIZE, cur->idx);
             /*end testing*/
 
             cur->dirty = false;
@@ -510,7 +510,6 @@ static void _table_commit(struct DB* db) {
 
     struct TimeStamp ts = _pager_new_stamp(db->super->timestamp);
     _pager_write_from_block(db, db->super, ts);
-    printf("commiting 4096 bytes from block 0\n");
 }
 
 //the table interface should be the same as that of the tree interface
@@ -542,7 +541,6 @@ void db_delete(struct DB* db, const char* key) {
     _table_read_metadata(db);
 
     int res = _table_delete_rec(db, key);
-    printf("_table_delete_result %d\n", res);
 
     _table_commit(db);
     _unlock(db->idxf, SEEK_SET, 0, 0);
@@ -570,9 +568,28 @@ char* db_fetch(struct DB* db, const char* key) {
 }
 
 void db_rewind(struct DB* db) {
+    db->chain_off = FREELIST_OFF;
+    db->idxrec_off = 0;
 }
 
 char* db_nextrec(struct DB* db) {
-    return NULL;
+    if (!db->idxrec_off) {
+        while (!db->idxrec_off && db->chain_off < RECORD_OFF) {
+            db->chain_off += sizeof(uint32_t);
+            pager_read(db, db->chain_off, &db->idxrec_off, sizeof(uint32_t));
+        }
+    }
+
+    if (db->chain_off >= RECORD_OFF)
+        return NULL;
+
+    struct Record r = _table_read_rec(db, db->idxrec_off);
+
+    char* key = _malloc(r.key_len + 1);
+    pager_read(db, db->idxrec_off + KEY_OFF, key, r.key_len);
+    key[r.key_len] = '\0';
+    db->idxrec_off = r.next_off;
+
+    return key;
 }
 
