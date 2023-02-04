@@ -1,14 +1,20 @@
 set(Sources
     main.c
-    urchin_db.c
+    urchin.c
+    util.c
+    pager.c
+    table.c
     )
 
 set(Headers
-    urchin_db.h
+    urchin.h
+    util.h
+    pager.h
+    table.h
     )
 
 add_executable(
-    kvdb
+    urchindb
     ${Headers}
     ${Sources}
     )

@@ -22,74 +22,26 @@ Andy Pavlo lectures from Carnegie Mellon University are really good!!!
         join
     Are there more relational algebra operators in modern databases?
         Yes!  Those 7 are just the most common/primitive operators
+
 TODO:
-    run metrics to see how much slower it is now
+
+    Some pager functions need  to check if file is write_locked
+        will not work properly if not locked
 
     Refactor files:
-        urchindb.c
+        The headers seem a bit messy with all definitions scattered all about
+        urchin.c
         table.c
             these functions require a massive refactor to remove repeated code/make it more readable
-        utility.c
+        util.c
+            these functions should be public
         pager.c
         main.c
 
+    Compile with all warnings on, and then fix them
+
     Make linked list of blocks doubling linked
     start block search from most recently access block instead of least recently used
-
-Table sees data in contiguous memory - pager does all the loading/dropping of blocks/setting flags for dirty blocks
-
-Once the block system works, rewrite so that we separate data and paging:
-    urchin_db.c (public functions for client code)
-    Back-end
-        table.c (hash table - change this to tree.c later when changing to relational database)
-        pager.c (this includes the interface between the pager and OS)
-        logger.c (write-ahead logging or shadowing)
-        osi.c (interface to allow usage with linux/macos/windows)
-    utility.c (wrappers and error handling)
-    Switch to tree.c format for row-relational database
-
-    Front-end
-        parser.c (parse SQL queries)
-        generator.c (generate machine code to run on vm)
-        vm.c (run machine code to manipulate data tree)
-
-Or try to make the size/time relationship linear (quadratic now) or even logarithmic
-    One option is only copying dirty blocks instead of entire file into buffer
-    make Block 0 (first page) the superblock that holds metadata (including dirty bits)
-    whenever a different block is dirty, update a bit so that we know when to copy/write to disk
-    All reads/writes will check bits and reload buffer cache from disk if any dirty bits found
-
-        Make first BLOCK_SIZE metadata
-        When calling _calloc, make sure to include include meta data block
-
-        Right now, we need to read the entire file into memory - this is not possible if file too big
-            need to only load in parts of file - need to decide on eviction policy to determine which
-            blocks stay in memory.
-
-    Right now, we are reading in update count for the entire file/buffer.  Need to separate that in reading
-        individual blocks.
-
-        Might be time to separate into multiple translation units with bettered defined interfaces:
-            cli.c - this is the public interface other programs/users have access to
-                db_create - will add this later to allow table creation
-                db_open
-                db_store
-                db_fetch
-                db_rewind - will remove later
-                db_nextrec - will remove later
-                db_query(condition); - will replace with SQL engine later
-            cache.c (either hash table or a tree representation)
-                cache_new_idxrec
-                cache_insert_idxrec
-                cache_remove_idxrec
-                data representation in buffer cache (either tree or hash table)
-                includes finding new index records (either allocating a new one, or reusing one from the freelist)
-                writing and reading data from the buffer cache
-                writes dirty bits to allow pager to know which blocks to write/update from disk
-            pager.c (this will take care of the OS interface for now)
-                pager_reload_cache()
-                pager_write_cache()
-                pager_
 
 Support multi-threading
     Write tests that show multi-threading fails (use pthreads)

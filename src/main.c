@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <time.h>
 #include <unistd.h>
-#include "urchin_db.h"
+#include "urchin.h"
 
 int standard_test() {
     struct DB* db = db_open("test");
@@ -222,9 +222,9 @@ int paging_test(uint32_t n) {
 }
 
 int main(int argc, char** argv) {
-    //standard_test();
+    standard_test();
     //data_persistence_test();
-    paging_test(32000);
+    //paging_test(32000);
     //file_locking_test(argc, argv);
     //stale_fetch_test();
     //stale_delete_test();
